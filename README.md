@@ -12,3 +12,6 @@ This package allows to define functions (even async) which execution is deffered
 
 ## Examples
 Examples are available in notebooks directory, where Jupyter notebooks are stored. All of them are prepared for running in Google Colab.
+
+Open synchronous examples in Google Colab [here](https://colab.research.google.com/github/hrbolek/functing/blob/main/notebooks/examples.ipynb).
+For asynchronous examples click [here](https://colab.research.google.com/github/hrbolek/functing/blob/main/notebooks/async_examples.ipynb)
