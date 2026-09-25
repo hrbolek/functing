@@ -9,6 +9,7 @@ from typing import (
     Awaitable,
     Callable,
     Generic,
+    Iterator,
     TypeVar,
 )
 
@@ -36,10 +37,27 @@ class Node(Generic[T]):
 
     A Node describes a computation but does not execute it immediately.
     Execution happens through resolve(), run_async(), or run().
+
+    Nodes can also expose their statically known child nodes through
+    children(), which allows the composition tree to be inspected without
+    executing it.
     """
 
     async def resolve(self, context: Context) -> T:
         raise NotImplementedError
+
+    def children(self) -> tuple[Node[Any], ...]:
+        """
+        Return statically known child nodes.
+
+        The default implementation represents a leaf node.
+
+        Some nodes, especially BindNode, may create additional nodes only
+        during execution. Such dynamically created nodes are therefore not
+        visible through static tree inspection before resolution.
+        """
+
+        return ()
 
     def map(
         self,
@@ -53,6 +71,7 @@ class Node(Generic[T]):
         - an awaitable
         - another Node
         """
+
         return MapNode(
             source=self,
             fn=fn,
@@ -67,6 +86,7 @@ class Node(Generic[T]):
 
         The next node is constructed only after this node has been resolved.
         """
+
         return BindNode(
             source=self,
             fn=fn,
@@ -114,6 +134,9 @@ class MapNode(Node[U], Generic[T, U]):
     source: Node[T]
     fn: Callable[[T], U | Awaitable[U] | Node[U]]
 
+    def children(self) -> tuple[Node[Any], ...]:
+        return (self.source,)
+
     async def resolve(self, context: Context) -> U:
         value = await self.source.resolve(context)
         mapped = self.fn(value)
@@ -131,10 +154,16 @@ class BindNode(Node[U], Generic[T, U]):
 
     The next node can only be constructed after the source node has
     been resolved.
+
+    Static inspection exposes only the source node. The node created by
+    `fn` exists only after the source has been resolved.
     """
 
     source: Node[T]
     fn: Callable[[T], Node[U]]
+
+    def children(self) -> tuple[Node[Any], ...]:
+        return (self.source,)
 
     async def resolve(self, context: Context) -> U:
         value = await self.source.resolve(context)
@@ -153,6 +182,9 @@ class GatherNode(Node[tuple[Any, ...]]):
     """
 
     nodes: tuple[Node[Any], ...]
+
+    def children(self) -> tuple[Node[Any], ...]:
+        return self.nodes
 
     async def resolve(
         self,
@@ -273,6 +305,57 @@ def component(
         )
 
     return wrapped
+
+
+def walk(
+    node: Node[Any],
+) -> Iterator[Node[Any]]:
+    """
+    Depth-first traversal of the statically known composition tree.
+
+    The node itself is yielded first, followed by its children.
+
+    Example:
+
+        plan = gather(
+            value(1),
+            value(2).map(str),
+        )
+
+        for item in walk(plan):
+            print(type(item).__name__)
+
+    Output:
+
+        GatherNode
+        ValueNode
+        MapNode
+        ValueNode
+
+    Note:
+        Dynamically created nodes, such as the result of BindNode.fn,
+        cannot be inspected before execution and are therefore not included.
+    """
+
+    yield node
+
+    for child in node.children():
+        yield from walk(child)
+
+
+def walk_types(
+    node: Node[Any],
+) -> Iterator[type[Node[Any]]]:
+    """
+    Convenience iterator returning node types instead of node instances.
+
+    Example:
+
+        list(walk_types(plan))
+    """
+
+    for item in walk(node):
+        yield type(item)
 
 
 async def run_async(
