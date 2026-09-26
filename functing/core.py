@@ -124,6 +124,35 @@ class DeferredNode(Node[T]):
         value = self.factory()
         return await resolve_value(value, context)
 
+@dataclass
+class ContextDeferredNode(Node[T]):
+    """
+    Deferred computation with access to the current execution Context.
+
+    The factory is called only when the node is resolved and receives
+    the Context associated with the current run.
+
+    It may return:
+    - a plain value
+    - an awaitable
+    - another Node
+    """
+
+    factory: Callable[
+        [Context],
+        T | Awaitable[T] | Node[T],
+    ]
+
+    async def resolve(
+        self,
+        context: Context,
+    ) -> T:
+        value = self.factory(context)
+
+        return await resolve_value(
+            value,
+            context,
+        )
 
 @dataclass
 class MapNode(Node[U], Generic[T, U]):
@@ -306,7 +335,51 @@ def component(
 
     return wrapped
 
+def component_with_context(
+    fn: Callable[..., T | Awaitable[T] | Node[T]],
+) -> Callable[..., Node[T]]:
+    """
+    Decorator converting a function with access to the current execution
+    Context into a deferred component.
 
+    The decorated function should accept Context as a keyword-only argument.
+
+    Example:
+
+        @component_with_context
+        async def CurrentUser(
+            user_service: UserService,
+            *,
+            context: Context,
+        ) -> User:
+            user_id = context.data["user_id"]
+            return await user_service.get(user_id)
+
+        plan = CurrentUser(user_service)
+
+        result = await run_async(
+            plan,
+            context=Context(
+                data={
+                    "user_id": 123,
+                }
+            ),
+        )
+    """
+
+    def wrapped(*args, **kwargs) -> Node[T]:
+
+        return ContextDeferredNode(
+            factory=lambda context:
+                fn(
+                    *args,
+                    context=context,
+                    **kwargs,
+                )
+        )
+
+    return wrapped
+    
 def walk(
     node: Node[Any],
 ) -> Iterator[Node[Any]]:
